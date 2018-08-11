@@ -34,7 +34,7 @@ function javahome_winreg()
     end
 end
 
-@static isunix() ? (global const libname = "libjvm") : (global const libname = "jvm")
+const libname = @static isunix() ? "libjvm" : "jvm"
 
 function findjvm()
     javahomes = Any[]
@@ -47,13 +47,11 @@ function findjvm()
         @static iswindows() ? push!(javahomes, ENV["JAVA_HOME"]) : nothing
     end
 
-    if isfile("/usr/libexec/java_home")
-        push!(javahomes,chomp(readstring(`/usr/libexec/java_home`)))
-    end
+    fil = "/usr/libexec/java_home"
+    isfile(fil) && push!(javahomes, chomp(read(fil, String)))
 
-    if isdir("/usr/lib/jvm/default-java/")
-        push!(javahomes, "/usr/lib/jvm/default-java/")
-    end
+    fil = "/usr/lib/jvm/default-java/"
+    isdir(fil) &&  push!(javahomes, fil)
 
     push!(libpaths, pwd())
     for n in javahomes
@@ -66,9 +64,8 @@ function findjvm()
             if Sys.WORD_SIZE==64
                 push!(libpaths, joinpath(n, "jre", "lib", "amd64", "server"))
                 push!(libpaths, joinpath(n, "lib", "amd64", "server"))
-			elseif Sys.WORD_SIZE==32
+	    elseif Sys.WORD_SIZE==32
                 push!(libpaths, joinpath(n, "jre", "lib", "i386", "server"))
-
                 push!(libpaths, joinpath(n, "lib", "i386", "server"))
              end
          end
@@ -77,11 +74,11 @@ function findjvm()
     end
 
     ext = @static iswindows() ? "dll" : (@static isapple() ? "dylib" : "so")
-    ext = "."*ext
+    ext = "." * ext
 
     try
         for n in libpaths
-            libpath = joinpath(n,libname*ext);
+            libpath = joinpath(n, libname * ext)
             if isfile(libpath)
                 if iswindows()
                     bindir = dirname(dirname(libpath))
@@ -104,16 +101,12 @@ function findjvm()
     for path in libpaths
         push!(errorMsg,"\n   $path")
     end
-    throw(JavaCallError(reduce(*,errorMsg)))
+    throw_jc_err(reduce(*, errorMsg))
 end
-
-
-
-
 
 struct JavaVMOption
     optionString::Ptr{UInt8}
-    extraInfo::Ptr{Nothing}
+    extraInfo::VoidPtr
 end
 
 struct JavaVMInitArgs
@@ -123,69 +116,77 @@ struct JavaVMInitArgs
     ignoreUnrecognized::Cchar
 end
 
-
 @static isunix() ? (const sep = ":") : nothing
 @static iswindows() ? (const sep = ";") : nothing
-cp = OrderedSet{String}()
-opts = OrderedSet{String}()
 
-function addClassPath(s::String)
+const _classpaths = OrderedSet{String}()
+const _options    = OrderedSet{String}()
+
+function addClassPath(str::String)
+    println("addClassPath($str)")
     if isloaded()
-        warn("JVM already initialised. This call has no effect")
+        @warn("JVM already initialised. This call has no effect")
         return
     end
-    if s==""; return; end
-    if endswith(s, "/*") && isdir(s[1:end-2])
-        for x in s[1:end-1] .* readdir(s[1:end-2])
-            endswith(x, ".jar") && push!(cp, x)
+    str == "" && return
+    if endswith(str, "/*") && isdir(str[1:end-2])
+        for fn in readdir(s[1:end-2])
+            println(fn)
+            endswith(fn, ".jar") && push!(_classpaths, str[1:end-1] * fn)
         end
         return
     end
-    push!(cp, s)
+    push!(_classpaths, str)
     return
 end
 
-addOpts(s::String) = isloaded() ? @warn("JVM already initialised. This call has no effect") : push!(opts, s)
+addOpts(s::String) =
+    isloaded() ? @warn("JVM already initialised. This call has no effect") : push!(_options, s)
 
 function init()
-    if isempty(cp)
-        init(opts)
+    if isempty(_classpaths)
+        init(_options)
     else
-        ccp = collect(cp)
-        init(vcat(collect(opts), reduce((x,y)->string(x,sep,y),"-Djava.class.path=$(ccp[1])",ccp[2:end])))
+        ccp = collect(_classpaths)
+        init(vcat(collect(_options),
+                  reduce((x, y)->string(x, sep, y), "-Djava.class.path=$(ccp[1])", ccp[2:end])))
     end
 end
 
-isloaded() = isdefined(JavaCall, :jnifunc) && isdefined(JavaCall, :penv) && penv != C_NULL
+assertloaded() = isloaded() ? nothing : throw_jc_err("JVM not initialised. Please run init()")
+assertnotloaded() = isloaded() ? throw_jc_err("JVM already initialised") : nothing
 
-assertloaded() = isloaded() ? nothing : throw(JavaCallError("JVM not initialised. Please run init()"))
-assertnotloaded() = isloaded() ? throw(JavaCallError("JVM already initialised")) : nothing
+const _jvm    = Ref{Ptr{JavaVM}}()
+const _jenv   = Ref{JNIEnvPtr}()
+const _jvmfun = Ref{Any}()
+const _jnifun = Ref{Any}()
+
+isloaded() = isassigned(_jnifun) && isassigned(_jenv) && _jenv[] != C_NULL
 
 # Pointer to pointer to pointer to pointer alert! Hurrah for unsafe load
 function init(opts)
     assertnotloaded()
-    opt = [JavaVMOption(pointer(x), C_NULL) for x in opts]
-    ppjvm = Array{Ptr{JavaVM}}(undef, 1)
-    ppenv = Array{Ptr{JNIEnv}}(undef, 1)
-    vm_args = JavaVMInitArgs(JNI_VERSION_1_6, convert(Cint, length(opts)),
-                             convert(Ptr{JavaVMOption}, pointer(opt)), JNI_TRUE)
-    res = ccall(create, Cint, (Ptr{Ptr{JavaVM}}, Ptr{Ptr{JNIEnv}}, Ptr{JavaVMInitArgs}), ppjvm, ppenv,
-                Ref(vm_args))
-    res < 0 && throw(JavaCallError("Unable to initialise Java VM: $(res)"))
-    global penv = ppenv[1]
-    global pjvm = ppjvm[1]
-    jnienv = unsafe_load(penv)
-    jvm = unsafe_load(pjvm)
-    global jvmfunc = unsafe_load(jvm.JNIInvokeInterface_)
-    global jnifunc = unsafe_load(jnienv.JNINativeInterface_) #The JNI Function table
-    return
+    try
+        opt = [JavaVMOption(pointer(x), C_NULL) for x in opts]
+        vm_args = JavaVMInitArgs(JNI_VERSION_1_6, convert(Cint, length(opts)),
+                                 convert(Ptr{JavaVMOption}, pointer(opt)), JNI_TRUE)
+        res = ccall(create_jvm[], Cint, (Ref{Ptr{JavaVM}}, Ref{JNIEnvPtr}, Ref{JavaVMInitArgs}),
+                    _jvm, _jenv, Ref(vm_args))
+        res < 0 && throw_jc_err("Unable to initialise Java VM: $res")
+        jvm = unsafe_load(_jvm[])
+        jni = unsafe_load(_jenv[])
+        _jvmfun[] = unsafe_load(jvm.JNIInvokeInterface_)
+        _jnifun[] = unsafe_load(jni.JNINativeInterface_) #The JNI Function table
+        nothing
+    catch ex
+        println("JavaCall.init($opts): ", sprint(showerror, ex, catch_backtrace()))
+        ex
+    end
 end
 
 function destroy()
-    if (!isdefined(JavaCall, :penv) || penv == C_NULL)
-        throw(JavaCallError("Called destroy without initialising Java VM"))
-    end
-    res = ccall(jvmfunc.DestroyJavaVM, Cint, (Ptr{Nothing},), pjvm)
-    res < 0 && throw(JavaCallError("Unable to destroy Java VM"))
-    global penv=C_NULL; global pjvm=C_NULL;
+    _jenv[] == C_NULL && throw_jc_err("Called destroy without initialising Java VM")
+    res = ccall(_jvmfun[].DestroyJavaVM, Cint, (VoidPtr,), pjvm)
+    res < 0 && throw_jc_err("Unable to destroy Java VM: $res")
+    _jvm[] = _jenv[] = C_NULL
 end

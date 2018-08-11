@@ -1,3 +1,4 @@
+__precompile__()
 module JavaCall
 export JavaObject, JavaMetaClass,
        jint, jlong, jbyte, jboolean, jchar, jshort, jfloat, jdouble,
@@ -12,10 +13,9 @@ using Compat.Sys: iswindows, islinux, isunix, isapple
 
 import DataStructures: OrderedSet
 
-if VERSION < v"0.7-"
+@static if VERSION < v"0.7-"
     using Compat: @warn
     import Base: isnull
-    Base.finalizer(f::Function, o) = Base.finalizer(o, f)
 else
     using Libdl
 end
@@ -27,6 +27,7 @@ end
 
 import Base: convert, unsafe_convert, unsafe_string
 
+const VoidPtr = Ptr{Nothing}
 
 include("jnienv.jl")
 include("jvm.jl")
@@ -34,10 +35,11 @@ include("core.jl")
 include("convert.jl")
 include("reflect.jl")
 
+const create_jvm = Ref{VoidPtr}()
+
 function __init__()
-	findjvm()
-	global create = Libdl.dlsym(libjvm, :JNI_CreateJavaVM)
+    findjvm()
+    create_jvm[] = Libdl.dlsym(libjvm, :JNI_CreateJavaVM)
 end
 
-
-end # module
+end # module JavaCall

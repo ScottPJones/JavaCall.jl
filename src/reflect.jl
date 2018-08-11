@@ -1,31 +1,28 @@
-
-function getclass(obj::JavaObject)
-    jcall(obj, "getClass", JClass, ())
-end
+getclass(obj::JavaObject) = jcall(obj, "getClass", JClass, ())
 
 function conventional_name(name::AbstractString)
     if startswith(name, "[")
-        return conventional_name(name[2:end]) * "[]"
+        conventional_name(name[2:end]) * "[]"
     elseif name == "Z"
-        return "boolean"
+        "boolean"
     elseif name == "B"
-        return "byte"
+        "byte"
     elseif name == "C"
-        return "char"
+        "char"
     elseif name == "I"
-        return "int"
+        "int"
     elseif name == "J"
-        return "long"
+        "long"
     elseif name == "F"
-        return "float"
+        "float"
     elseif name == "D"
-        return "double"
+        "double"
     elseif name == "V"
-        return "void"
+        "void"
     elseif startswith(name, "L")
-        return name[2:end-1]
+        name[2:end-1]
     else
-        return name
+        name
     end
 end
 
@@ -41,10 +38,7 @@ Returns the fully qualified name of the java class
 ### Returns
 The fully qualified name of the java class
 """
-function getname(cls::JClass)
-    rawname = jcall(cls, "getName", JString, ())
-    conventional_name(rawname)
-end
+getname(cls::JClass) = conventional_name(jcall(cls, "getName", JString, ()))
 
 """
 ```
@@ -58,9 +52,7 @@ Returns the fully qualified name of the java method
 ### Returns
 The fully qualified name of the method
 """
-function getname(method::JMethod)
-    jcall(method, "getName", JString, ())
-end
+getname(method::JMethod) = jcall(method, "getName", JString, ())
 
 """
 ```
@@ -74,20 +66,9 @@ Lists the methods that are available on the java object passed
 ### Returns
 List of methods
 """
-function listmethods(obj::JavaObject)
-    cls = getclass(obj)
-    jcall(cls, "getMethods", Vector{JMethod}, ())
-end
-
-function listmethods(::Type{JavaObject{C}}) where C
-    cls = classforname(string(C))
-    jcall(cls, "getMethods", Vector{JMethod}, ())
-end
-
-function listmethods(cls::JClass)
-    jcall(cls, "getMethods", Vector{JMethod}, ())
-end
-
+listmethods(cls::JClass) = jcall(cls, "getMethods", Vector{JMethod}, ())
+listmethods(::Type{JavaObject{C}}) where {C} = listmethods(classforname(string(C)))
+listmethods(obj::JavaObject) = listmethods(getclass(obj))
 
 """
 ```
@@ -102,10 +83,8 @@ Lists the methods that are available on the java object passed. The methods are 
 ### Returns
 List of methods available on the java object and matching the name passed
 """
-function listmethods(obj::Union{JavaObject{C}, Type{JavaObject{C}}}, name::AbstractString) where C
-    allmethods = listmethods(obj)
-    filter(m -> getname(m) == name, allmethods)
-end
+listmethods(obj::Union{JavaObject{C},Type{JavaObject{C}}}, name::AbstractString) where {C} =
+    filter(m -> getname(m) == name, listmethods(obj))
 
 """
 ```
@@ -119,9 +98,7 @@ Returns the return type of the java method
 ### Returns
 Returns the type of the return object as a JClass
 """
-function getreturntype(method::JMethod)
-    jcall(method, "getReturnType", JClass, ())
-end
+getreturntype(method::JMethod) = jcall(method, "getReturnType", JClass, ())
 
 """
 ```
@@ -135,18 +112,11 @@ Returns the parameter types of the java method
 ### Returns
 Vector the parametertypes
 """
-function getparametertypes(method::JMethod)
-    jcall(method, "getParameterTypes", Vector{JClass}, ())
-end
+getparametertypes(method::JMethod) = jcall(method, "getParameterTypes", Vector{JClass}, ())
 
-function Base.show(io::IO, method::JMethod)
-    name = getname(method)
-    rettype = getname(getreturntype(method))
-    argtypes = [getname(c) for c in getparametertypes(method)]
-    argtypestr = join(argtypes, ", ")
-    print(io, "$rettype $name($argtypestr)")
-end
-
+Base.show(io::IO, method::JMethod) =
+    print(io, getname(getreturntype(method)), " ", getname(method), "(",
+          join([getname(c) for c in getparametertypes(method)], ", "), ")")
 
 """
 ```
@@ -162,7 +132,6 @@ JavaObject Instance of `Class<name>`
 """
 function classforname(name::String)
     thread = jcall(JThread, "currentThread", JThread, ())
-    loader = jcall(thread, "getContextClassLoader", JClassLoader, ())
-    return jcall(JClass, "forName", JClass, (JString, jboolean, JClassLoader),
-                 name, true, loader)
+    jcall(JClass, "forName", JClass, (JString, jboolean, JClassLoader), name, true,
+          jcall(thread, "getContextClassLoader", JClassLoader, ()))
 end
